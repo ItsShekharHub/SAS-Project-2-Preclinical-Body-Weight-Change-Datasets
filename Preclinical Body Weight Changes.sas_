@@ -1,0 +1,169 @@
+/* =======================================
+   1) Create Body Weight Dataset
+   ======================================= */
+data bodyweight;
+    infile datalines dsd truncover;
+    input TRTGRP :$20. AnimalID $ Day0 Final;
+    datalines;
+NC,NC1,267,269
+NC,NC2,287,290
+NC,NC3,312,315
+NC,NC4,310,313
+NC,NC5,282,285
+NC,NC6,265,266
+DC,DC1,322,278
+DC,DC2,359,305
+DC,DC3,327,268
+DC,DC4,320,276
+DC,DC5,354,300
+DC,DC6,325,266
+STD,STD1,291,268
+STD,STD2,295,245
+STD,STD3,306,264
+STD,STD4,304,262
+STD,STD5,294,244
+STD,STD6,290,267
+HEC_LD,HLD1,311,264
+HEC_LD,HLD2,270,252
+HEC_LD,HLD3,272,248
+HEC_LD,HLD4,310,263
+HEC_LD,HLD5,269,251
+HEC_LD,HLD6,309,262
+HEC_HD,HHD1,321,278
+HEC_HD,HHD2,299,262
+HEC_HD,HHD3,339,285
+HEC_HD,HHD4,335,281
+HEC_HD,HHD5,294,257
+HEC_HD,HHD6,311,268
+STD_HEC_LD,SHLD1,330,285
+STD_HEC_LD,SHLD2,300,272
+STD_HEC_LD,SHLD3,280,254
+STD_HEC_LD,SHLD4,270,244
+STD_HEC_LD,SHLD5,305,277
+STD_HEC_LD,SHLD6,305,275
+STD_HEC_HD,SHHD1,314,285
+STD_HEC_HD,SHHD2,342,322
+STD_HEC_HD,SHHD3,320,305
+STD_HEC_HD,SHHD4,310,281
+STD_HEC_HD,SHHD5,340,320
+STD_HEC_HD,SHHD6,310,295
+;
+run;
+
+proc print data=bodyweight noobs; title "Raw Body Weight Data"; run;
+
+/* =======================================
+   2) Convert to SDTM-like VS dataset
+   ======================================= */
+data sdtm_vs;
+    set bodyweight;
+    length USUBJID $10 VSTPT $10 VSTEST $20;
+    
+    /* Day0 record */
+    USUBJID=AnimalID; VSTPT="Day0"; VSTEST="Body Weight"; VSORRES=Day0; output;
+
+    /* Final record */
+    USUBJID=AnimalID; VSTPT="Final"; VSTEST="Body Weight"; VSORRES=Final; output;
+
+    keep USUBJID TRTGRP VSTEST VSORRES VSTPT;
+run;
+
+proc print data=sdtm_vs noobs; title "SDTM.VS (Body Weight)"; run;
+
+/* =======================================
+   3) Create ADaM ADVS dataset
+   ======================================= */
+data adam_advs;
+    set sdtm_vs;
+    AVISIT = VSTPT;
+    if upcase(AVISIT)="DAY0" then AVISITN=0;
+    else if upcase(AVISIT)="FINAL" then AVISITN=99;
+    AVAL = VSORRES;
+run;
+
+proc sort data=adam_advs; by USUBJID AVISITN; run;
+
+data adam_advs;
+    set adam_advs;
+    by USUBJID;
+    retain BASE;
+    if first.USUBJID then BASE=.;
+    if AVISITN=0 then BASE=AVAL;
+    if not missing(BASE) then CHG=AVAL-BASE;
+    keep USUBJID TRTGRP AVISIT AVISITN AVAL BASE CHG;
+run;
+
+proc print data=adam_advs noobs; title "ADaM.ADVS (Body Weight Analysis)"; run;
+
+/* =======================================
+   4) TLFs
+   ======================================= */
+/* Mean body weight by group & visit */
+proc means data=adam_advs nway noprint;
+    class TRTGRP AVISIT AVISITN;
+    var AVAL;
+    output out=mean_bw mean=MeanBW std=SD n=N;
+run;
+
+proc print data=mean_bw noobs; title "Mean Body Weight by Group & Visit"; run;
+
+/* Mean change from baseline (Final only) */
+proc means data=adam_advs nway noprint;
+    where AVISITN=99;
+    class TRTGRP;
+    var CHG;
+    output out=chg_bw mean=MeanCHG std=SDCHG n=N;
+run;
+
+proc print data=chg_bw noobs; title "Change from Baseline (Final Day) by Group"; run;
+
+/* =======================================
+   5) Figures
+   ======================================= */
+  ods graphics on;
+ods listing gpath="/home/u63324261/PreClinical Dataset Project" image_dpi=300;
+
+ods graphics / reset width=6in height=4in imagemap;
+proc sgplot data=mean_bw;
+    series x=AVISITN y=MeanBW / group=TRTGRP markers;
+    xaxis values=(0 99) valuesdisplay=("Day0" "Final") label="Visit";
+    yaxis label="Mean Body Weight (g)";
+    title "Mean Body Weight Over Time by Group";
+run;
+
+proc sgplot data=adam_advs;
+    vbox CHG / category=TRTGRP;
+    yaxis label="Change in Body Weight (g)";
+    title "Boxplot: Change from Baseline by Group";
+run;
+
+
+*=======================================
+6) Export to CSV (Corrected)
+=======================================*/;
+%let path=/home/u63324261/PreClinical Dataset Project;
+
+/* Export SDTM VS */
+proc export data=sdtm_vs
+    outfile="&path/sdtm_vs.csv"
+    dbms=csv replace;
+run;
+
+/* Export ADaM ADVS */
+proc export data=adam_advs
+    outfile="&path/adam_advs.csv"
+    dbms=csv replace;
+run;
+
+/* Export Mean BW summary */
+proc export data=mean_bw
+    outfile="&path/mean_bw.csv"
+    dbms=csv replace;
+run;
+
+/* Export Change from baseline summary */
+proc export data=chg_bw
+    outfile="&path/chg_bw.csv"
+    dbms=csv replace;
+run;
+
